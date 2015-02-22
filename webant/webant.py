@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, abort, Response, redirect, url_for, send_file
+from flask import Flask, render_template, request, abort
+from flask import Response, redirect, url_for, send_file
 from werkzeug import secure_filename
 from utils import requestedFormat
 from flask_bootstrap import Bootstrap
@@ -86,6 +87,9 @@ def create_app():
     initLoggers(logging.DEBUG if conf.get('DEBUG', False) else logging.WARNING)
     app = LibreantViewApp("webant", conf)
 
+    # XXX Why are the routes defined inside of a function?
+    #     I would suggest refactoring this to be inside of a separate module
+    #     called api or webapi.
     @app.route('/')
     def index():
         return render_template('index.html')
@@ -102,14 +106,14 @@ def create_app():
             src['_id'] = b['_id']
             src['_score'] = b['_score']
             books.append(src)
-        format = requestedFormat( request,
-                                  ['text/html',
-                                   'text/xml',
-                                   'application/rss+xml',
-                                   'opensearch'])
+        format = requestedFormat(request,
+                                 ['text/html',
+                                  'text/xml',
+                                  'application/rss+xml',
+                                  'opensearch'])
         if format == 'text/html':
             return render_template('search.html', books=books, query=query)
-        if format in ['opensearch', 'text/xml','application/rss+xml']:
+        if format in ['opensearch', 'text/xml', 'application/rss+xml']:
             return Response(render_template('opens.xml',
                                             books=books, query=query),
                             mimetype='text/xml')
@@ -118,13 +122,14 @@ def create_app():
     def upload():
         requiredFields = ['_language']
         optFields = ['_preset']
-        body= {}
+        body = {}
 
-        #TODO check also for preset consistency?
+        # TODO check also for preset consistency?
 
         for requiredField in requiredFields:
             if requiredField not in request.form:
-                renderErrorPage(gettext('Required field "%(mField)s is missing',
+                renderErrorPage(gettext('Required field \
+                                        "%(mField)s is missing',
                                 mField=requiredField), 400)
             else:
                 body[requiredField] = request.form[requiredField]
@@ -133,12 +138,12 @@ def create_app():
             if optField in request.form:
                 body[optField] = request.form[optField]
 
-        for key,value in request.form.items():
+        for key, value in request.form.items():
             if key.startswith('field_') and value:
                 body[key[6:]] = value
 
         files = []
-        for upName,upFile in request.files.items():
+        for upName, upFile in request.files.items():
             tmpFile, tmpFilePath = tempfile.mkstemp()
             upFile.save(tmpFilePath)
             fileInfo = {}
@@ -160,7 +165,7 @@ def create_app():
             body['_files'] = files
 
         addedItem = app.get_db().add_book(doc_type="book", body=body)
-        return redirect(url_for('view_book',bookid=addedItem['_id']))
+        return redirect(url_for('view_book', bookid=addedItem['_id']))
 
     @app.route('/add', methods=['GET'])
     def add():
@@ -174,7 +179,9 @@ def create_app():
         else:
             preset = None
 
-        return render_template('add.html', preset=preset, availablePresets=app.presetManager.presets, isoLangs=isoLangs)
+        return render_template('add.html', preset=preset,
+                               availablePresets=app.presetManager.presets,
+                               isoLangs=isoLangs)
 
     @app.route('/description.xml')
     def description():
@@ -184,9 +191,11 @@ def create_app():
     @app.route('/view/<bookid>')
     def view_book(bookid):
         try:
-             b = app.get_db().get_book_by_id(bookid)
-        except NotFoundError, e:
-             return renderErrorPage(message='no element found with id "{}"'.format(bookid), httpCode=404)
+            b = app.get_db().get_book_by_id(bookid)
+        except NotFoundError:
+            return renderErrorPage('no element found \
+                                   with id "{}"'.format(bookid),
+                                   httpCode=404)
         similar = app.get_db().mlt(bookid)['hits']['hits'][:10]
         return render_template('details.html',
                                book=b['_source'], bookid=bookid,
@@ -196,11 +205,15 @@ def create_app():
     def download_book(bookid, fileid):
         try:
             b = app.get_db().get_book_by_id(bookid)
-        except NotFoundError, e:
-            return renderErrorPage(message='no element found with id "{}"'.format(bookid), httpCode=404)
+        except NotFoundError:
+            return renderErrorPage('no element found \
+                                   with id "{}"'.format(bookid),
+                                   httpCode=404)
         if '_files' not in b['_source']:
-            return renderErrorPage(message='element with id "{}" has no files attached'.format(bookid), httpCode=404)
-        for i,file in enumerate(b['_source']['_files']):
+            return renderErrorPage('element with id "{}" \
+                                   has no files attached'.format(bookid),
+                                   httpCode=404)
+        for i, file in enumerate(b['_source']['_files']):
             if file['sha1'] == fileid:
                 try:
                     app.get_db().increment_download_count(bookid, i)
@@ -208,11 +221,13 @@ def create_app():
                     app.logger.warn("Cannot increment download count",
                                     exc_info=1)
                 return send_file(app.fsdb.getFilePath(file['fsdb_id']),
-                                  mimetype=file['mime'],
-                                  attachment_filename=file['name'],
-                                  as_attachment=True)
+                                 mimetype=file['mime'],
+                                 attachment_filename=file['name'],
+                                 as_attachment=True)
         # no file found with the given digest
-        return renderErrorPage(message='no file found with id "{}" on item "{}"'.format(fileid, bookid), httpCode=404)
+        return renderErrorPage('no file found with \
+                               id "{}" on item "{}"'.format(fileid, bookid),
+                               httpCode=404)
 
     @app.babel.localeselector
     def get_locale():
@@ -221,8 +236,17 @@ def create_app():
     return app
 
 
+# XXX Is the plan to use CamelCase or snake_case? Pick on, but don't use both
+# :P
 def renderErrorPage(message, httpCode):
-    return render_template('error.html', message=message, code=httpCode), httpCode
+    # XXX perhaps you want to put the gettext call before calling the below
+    # function.
+    # If not all of the above calls to renderErrorPage should call gettext
+    # on the message
+    return render_template('error.html',
+                           message=message,
+                           code=httpCode), httpCode
+
 
 def main():
     app = create_app()
